@@ -23,17 +23,27 @@ google-chrome --user-data-dir="$HOME/.config/chromium" --remote-debugging-port=0
 Chrome refuses `--remote-debugging-port` on its default profile directory, so a
 non-default `--user-data-dir` is required.
 
+`npm test` is the other half: 14 tests under `node --test tests/` mount the real
+`client.js` in a `node:vm` sandbox with a stub DOM and a fault-injecting
+`require`, so the guarantees below can be re-checked on a machine with no
+Harness running at all.
+
 ## Expected values
 
 Measured 2026-10-17 on a 1198x1417 viewport, light and dark themes, 3339 elements
-in a loaded session view and 818 in the empty state.
+in a loaded session view and 818 in the empty state; the `installed` block and
+the row numbers were re-measured after the v2.0 rewrite.
 
 | Field | Expected |
 |---|---|
-| `mounted.stylesheet` | `true` |
-| `mounted.marker` | `"on"` (or `"off"` if you turned it off) |
-| `mounted.dir` / `mounted.lang` | `"rtl"` / `"ar"` |
-| `mounted.fontHasArabicFamily` | `true` |
+| `installed.stylesheet` | `true` |
+| `installed.sheetOwner` | `"@fares/dsh-rtl-bidi"` |
+| `installed.marker` | `"on"` (or `"off"` if you turned it off) |
+| `installed.rowState` | `"registered"`; a page whose slot service is missing reports `"skipped:no-slots"` instead, and the layer is still applied |
+| `installed.store` | `"on"` by default |
+| `installed.handle` | `true` — `window.__dshRtlBidiLayer` exposes `on`, `setOn`, `setLang`, `subscribe`, `dispose` |
+| `installed.dir` / `installed.lang` | `"rtl"` / `"ar"` |
+| `installed.fontHasArabicFamily` | `true` |
 | `direction.rtl` | every element except the code surfaces |
 | `direction.ltrExamples` | only `code` / `pre` entries |
 | `layout.overflowX` | `0` — the flip must not introduce horizontal overflow |
@@ -42,8 +52,14 @@ in a loaded session view and 818 in the empty state.
 | `composer.direction` | `"rtl"` |
 | `composer.unicodeBidi` | `"plaintext"` |
 | `addedElements` | `["dsh-rtl-bidi-style"]` — the stylesheet only, no overlay |
-| `toggle.afterAltR` | `dir` null, `lang` back to the page's original |
-| `toggle.restored` | `rtl` / `ar` again |
+| `settingsRow` | present once Settings → General is open: `unicode-bidi: isolate`, `direction: rtl`, `559x56` |
+| `settingsSwitch.role` / `.ariaChecked` | `"switch"` / `"true"` (follows the store, so Alt+R moves it) |
+| `settingsSwitch.size` | `[36, 20]` — the host's own switch is `36x20` too |
+| `settingsSwitch.track` (on) | `rgb(249, 250, 251)` = `--dsw-alias-brand-primary` |
+| `settingsSwitch.track` (off) | `rgb(44, 44, 46)` = `--dsw-alias-bg-layer-2` |
+| `settingsSwitch.knobTravel` | `16px` on / `0px` off, so the knob mirrors in RTL and LTR |
+| `toggle.afterAltR` | `dir` null, `lang` back to the page's original, `marker` `"off"` |
+| `toggle.restored` | `rtl` / `ar` / `"on"` again |
 | `window.__rtlProbeHeal` | `rtl` / `ar` within 250 ms of the app rewriting `<html>` |
 
 ## Why the root attribute is enough
@@ -60,3 +76,7 @@ Arabic sidebar title moved `x=40 -> x=963`, the composer `380 -> 105`, and
   mirrored layout feels right; open the page and look.
 - Views not exercised by the probe (plugin panels, automation tasks, a
   terminal). They inherit the same rules, but they were not each measured.
+- The Desktop GUI window. It loads the same client bundle, so the layer is the
+  same code, but that window exposes no debugging port and was therefore never
+  probed directly; reload it (`Ctrl+R`) after installing a new version and its
+  state is the same as the Web UI's.

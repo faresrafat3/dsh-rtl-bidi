@@ -1,9 +1,10 @@
 {
   "name": "@fares/dsh-rtl-bidi",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./index.js", "./client": "./client.js" },
+  "scripts": { "test": "node --test tests/" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {

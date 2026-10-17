@@ -4,22 +4,29 @@
  * compare the returned object with the expected values in README.md. It only
  * reads; to test the toggle it can dispatch Alt+R, which is stated in the
  * report as `toggleWorked`.
+ *
+ * The caller's own client (browser, CDP) needs no cooperation from the plugin:
+ * the three markers below are the layer's whole observable surface.
  */
 (() => {
   const html = document.documentElement;
   const cs = (el) => getComputedStyle(el);
   const report = {};
 
-  // 1. the layer is mounted
+  // 1. the layer is mounted, and it says how far it got
   const style = document.getElementById('dsh-rtl-bidi-style');
-  report.mounted = {
+  report.installed = {
     stylesheet: !!style,
-    marker: html.dataset.dshRtlBidi || null,
+    sheetOwner: style ? style.dataset.plugin || null : null, // expected '@fares/dsh-rtl-bidi'
+    marker: html.dataset.dshRtlBidi || null, // 'on' / 'off'
+    rowState: html.dataset.dshRtlBidiRow || null, // 'registered' / 'skipped:no-react' / 'skipped:no-slots'
+    store: localStorage.getItem('dsh:rtl-bidi'), // 'on' / 'off' / null
+    handle: !!window.__dshRtlBidiLayer,
     dir: html.getAttribute('dir'),
     lang: html.getAttribute('lang'),
     fontHasArabicFamily: /Noto (Naskh|Kufi|Sans) Arabic/.test(cs(document.body).fontFamily),
   };
-  if (!style) return { mounted: report.mounted, note: 'plugin not loaded in this page' };
+  if (!style) return { installed: report.installed, note: 'plugin not loaded in this page' };
 
   // 2. the whole shell flipped, minus the surfaces that must not
   let ltr = 0;
@@ -53,18 +60,41 @@
   // 5. the plugin adds no element of its own (no overlay to collide with)
   report.addedElements = [...document.querySelectorAll('[id^="dsh-rtl"]')].map((el) => el.id);
 
-  // 6. Alt+R flips both attributes, and the layer re-asserts itself
+  // 6. the settings row, when Settings is open. `rowState` above already tells
+  //    you whether it registered; these are its live geometry and theme colors.
+  const row = document.querySelector('[data-rtl-bidi-row]');
+  const sw = document.querySelector('[data-rtl-bidi-switch]');
+  report.settingsRow = row
+    ? {
+        unicodeBidi: cs(row).unicodeBidi,
+        direction: cs(row).direction,
+        rect: (r) => [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)](row.getBoundingClientRect()),
+        label: (row.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+      }
+    : 'open Settings → General first';
+  report.settingsSwitch = sw
+    ? {
+        role: sw.getAttribute('role'),
+        ariaChecked: sw.getAttribute('aria-checked'),
+        size: (() => { const r = sw.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })(),
+        track: cs(sw).backgroundColor,
+        knob: cs(sw.firstElementChild).backgroundColor,
+        knobTravel: cs(sw.firstElementChild).marginInlineStart,
+      }
+    : null;
+
+  // 7. Alt+R flips both attributes, and the layer re-asserts itself
   const before = { dir: html.getAttribute('dir'), lang: html.getAttribute('lang') };
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', altKey: true, bubbles: true }));
-  const off = { dir: html.getAttribute('dir'), lang: html.getAttribute('lang') };
+  const off = { dir: html.getAttribute('dir'), lang: html.getAttribute('lang'), marker: html.dataset.dshRtlBidi };
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', altKey: true, bubbles: true }));
   report.toggle = {
     before,
     afterAltR: off,
-    restored: { dir: html.getAttribute('dir'), lang: html.getAttribute('lang') },
+    restored: { dir: html.getAttribute('dir'), lang: html.getAttribute('lang'), marker: html.dataset.dshRtlBidi },
   };
 
-  // 7. the app rewrites <html>; the layer must come back on its own
+  // 8. the app rewrites <html>; the layer must come back on its own
   html.setAttribute('dir', 'ltr');
   html.setAttribute('lang', 'en');
   setTimeout(() => {
