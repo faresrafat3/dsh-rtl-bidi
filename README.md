@@ -14,14 +14,22 @@ One client plugin, installed into the `web` profile. It sets `dir="rtl"` and
 each text block its own base direction (`unicode-bidi: plaintext`), and pins
 code/terminal/editor surfaces back to `direction: ltr; unicode-bidi: isolate`.
 
-It registers no slot and renders nothing, so it cannot disturb the app layout.
 A `MutationObserver` re-asserts both attributes if the app rewrites `<html>`
 (measured: it resets `lang="en"` on boot).
 
-## Toggle
+## The option and the shortcut
 
-**Alt+R** turns it off and on. The choice persists in `localStorage` under
-`dsh:rtl-bidi` (`"on"` / `"off"`); default is on.
+**Settings → General → "Right-to-left layout"** is the control. The plugin
+registers one preference row into the host's additive seat
+(`settings.general.item`, order 13), so the row allocates its own space inside
+the host's own column and cannot cover anything.
+
+**Alt+R** toggles the same state from anywhere. Both write one store and the row
+subscribes to it, so the shortcut and the switch can never disagree (measured:
+after Alt+R the row's `aria-checked` follows).
+
+The choice persists in `localStorage` under `dsh:rtl-bidi` (`"on"` / `"off"`);
+default is on.
 
 To remove it for the whole profile:
 
@@ -44,14 +52,21 @@ Measured on the live app (2026-10-17, 1198x1417 viewport):
 | Code surfaces | `pre`/`code` = `ltr` + `isolate`, `pre` `text-align: left` |
 | Composer | `direction: rtl`, `unicode-bidi: plaintext` |
 | App rewrite of `<html>` | re-asserted within 250 ms |
+| Settings row | `559x56` at `x=228`, `unicode-bidi: isolate`, mirrored with the panel |
+| Settings switch, on | `36x20`, track `#f9fafb` (brand), knob `#151517` |
+| Settings switch, off | track `#2c2c2e` (layer-2), knob `#cfd3d6` (label-secondary) |
+| The host's own switch | `36x20`; on-track `#f9fafb`; its OFF switch is a subtle track with a light knob |
+| Knob travel | `margin-inline-start` 16px on / 0 off, so it mirrors correctly in RTL and LTR |
+| Shortcut → row | `aria-checked` follows Alt+R; both write one store |
 
 ## No floating toggle button, on purpose
 
 Every viewport corner is occupied by another control. A floating pill at the
 bottom-end corner was measured overlapping a 260x42 app trigger by 748 px² out
 of its own 770 px², and the other corners collide too (top-end 256/300/616 px²).
-A fixed overlay therefore cannot be placed safely across views, so the layer
-ships with a keyboard toggle and zero added pixels.
+A fixed overlay therefore cannot be placed safely across views, so the layer adds
+zero pixels of its own and exposes the control through the settings row and
+Alt+R instead.
 
 ## Verification
 
