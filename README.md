@@ -15,26 +15,30 @@ paragraphs resolve with a left-to-right base direction.
 shortcut — before the module system reads the factory at all. Nothing in that
 path touches a service, React or a slot.
 
-That placement is not decoration, it is the fix for the failure this plugin was
-reported with. The client module loader materializes a factory lazily: its own
-contract (`@deepseek-ai/dsh-client-modules/lib/client.js`, "Resolution branch
-order (import)" and `arrive(row)` returning early when `factories.has(id)`) says
-a row registers its factory when the bundle executes and gets its exports only on
-the first import/require — and a row that is invalidated, still arriving, or
-never imported is never materialized at all. Measured on the live page: installed
-from inside the factory the layer was simply *absent* (`dir: null`, `lang: "en"`,
-no marker, no handle, no stylesheet) while the very same factory, executed
-standalone in that page, applied it (`dir: rtl`, `lang: ar`, stylesheet present,
-handle present). Installing from the script closes that gap: executing the script
-is the one event that always happens.
+That placement removes a proven risk; it is not a proven cause. **Proven:** the
+client module loader materializes a factory lazily — its own contract
+(`@deepseek-ai/dsh-client-modules/lib/client.js`, lines 16-31) states the import
+resolution order (a bundle that executes only *registers* its factory; the
+exports appear on the first import/require), `arrive(row)` returns early when
+`factories.has(id)`, and a factory registered through the real
+`window.__ModuleLoader__.load` was observed never to run in the live page. So a
+row that is invalidated, still arriving or never imported never materializes, and
+a page-wide side effect living inside the factory can be absent with no residue
+and no error. **Not proven:** that laziness is what made *this* plugin absent.
+The row materializes today, both versions shared the same loader row, and the
+older version's factory opened with an unguarded `require('react')` — a throw
+there aborts materialization before anything is installed, which fits the same
+symptom. Installing from the script retires the whole class of risk.
 
-**The row is optional.** The preference row in Settings → General declares
-`inject: ['slots']`, because in this harness a slot service is reachable as
-`ctx.slots` only when the module declares it — the shipped docs panel does exactly
-this. Measured before that declaration existed: `apply()` ran and the row was
-skipped silently, `data-dsh-rtl-bidi-row="skipped:no-slots"`. A missing React or a
-missing slot service now costs the row and nothing else, and the layer states
-which of the two happened in that attribute.
+**The row is optional.** It declares `inject: ['slots']`. On this cordis, reading
+`ctx.slots` without that declaration throws, and the declaration also parks the
+fiber until the provider is active; `ctx.get('slots')` is the un-gated optional
+lookup and can transiently return nothing while the provider initializes
+(measured: `undefined`, then the service 60 ms later as the provider's fiber moved
+from state 1 to 2). Before the declaration existed, `apply()` ran and the row was
+skipped silently, recorded as `data-dsh-rtl-bidi-row="skipped:no-slots"`. A
+missing React or a missing slot service now costs the row and nothing else, and
+the layer states which of the two happened in that attribute.
 
 `ctx.effect` runs its callback immediately and keeps the callback's **return
 value** as the disposer (`cordis/lib/index.js:1142`), so the row's cleanup is
@@ -108,7 +112,12 @@ instead.
 
 ## Verification
 
-    npm test          # 14 tests, node --test tests/, no Harness required
+    npm test          # 15 tests, node --test tests/, no Harness required
+
+That suite is a module-behaviour suite over the real `client.js` in a `node:vm`
+sandbox, not evidence about the loader: some of its assertions exercise only
+fixture logic and would still pass under a wrong model of the loader. The loader
+claims above rest on the cited source lines and on live probes, not on the tests.
 
 `verify/rtl-probe.js` is the probe the live numbers above came from: paste it into
 the page console (or evaluate it over CDP) and compare with `verify/README.md`.
@@ -122,6 +131,6 @@ every visual statement is a computed style or an element rectangle.
 | `package.json` | bundle manifest; `dsh.client.immediately = true`, empty `inject` |
 | `cordis.patch.yml` | inserts loader row `rtl-bidi` |
 | `index.js` | host half, `apply()` is intentionally empty |
-| `client.js` | the whole feature: layer, row, shortcut, 394 lines with comments |
-| `tests/client.test.mjs` | 14 tests: loader contract, fault isolation, store, watcher, row |
+| `client.js` | the whole feature: layer, row, shortcut, ~400 lines with comments |
+| `tests/client.test.mjs` | 15 tests: loader contract, fault isolation, store, watcher, row |
 | `verify/rtl-probe.js` | the live-page probe, read-only |

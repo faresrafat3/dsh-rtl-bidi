@@ -318,6 +318,24 @@ test('the row subscribes to the same state the shortcut writes', () => {
   assert.equal(dom.html.dataset.dshRtlBidi, 'off');
 });
 
+test('a bound member that throws still falls through to the optional lookup', () => {
+  const dom = boot();
+  const mod = dom.loaded.factory(reactRequire());
+  const registered = [];
+  const ctx = {
+    effect: () => {},
+    // Real cordis throws exactly here when the module declares no inject, and
+    // this must not swallow the ctx.get fallback with it.
+    get slots() { throw new Error('cannot get property slots without inject'); },
+    get: (name) => (name === 'slots'
+      ? { inject: (key, cb) => cb(), register: (options, component) => { registered.push({ options, component }); return {}; } }
+      : undefined),
+  };
+  mod.apply(ctx);
+  assert.equal(registered.length, 1, 'the row mounted through ctx.get even though ctx.slots threw');
+  assert.equal(dom.html.dataset.dshRtlBidiRow, 'registered');
+});
+
 test('a fiber teardown keeps the layer and drops only its own row', () => {
   const dom = boot();
   const mod = dom.loaded.factory(reactRequire());

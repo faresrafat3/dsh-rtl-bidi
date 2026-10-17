@@ -195,12 +195,20 @@ function mark(value) {
   }
 }
 
-/** Read a client service however this harness hands it over: as a bound ctx
- *  member (what a declared inject resolves to) or through ctx.get. Accepting
- *  both is what keeps the row independent of the injection style. */
+/** Read a client service however this harness hands it over: through ctx.get,
+ *  the optional lookup that needs no declaration, or as a bound ctx member. A
+ *  bound member exists only for a declared inject — on cordis, reading one
+ *  without the declaration throws — which is why the row declares one. */
 function service(ctx, name) {
+  // The two lookups are guarded separately: a member read that throws must fall
+  // through to ctx.get, and a single try around both would swallow the fallback
+  // instead (measured on the served code before this split).
   try {
     if (ctx && ctx[name]) return ctx[name];
+  } catch (err) {
+    /* no bound member here: fall through to the optional lookup */
+  }
+  try {
     if (ctx && typeof ctx.get === 'function') return ctx.get(name);
   } catch (err) {
     /* treat as absent */
