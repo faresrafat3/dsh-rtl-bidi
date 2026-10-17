@@ -344,12 +344,15 @@ function mountRow(layer, require, ctx) {
 }
 
 // The layer is installed when this script executes, not when the module system
-// materializes the factory. Measured on the live page: the loader calls a
-// factory lazily, so a row that is invalidated, still arriving, or waiting for
-// activation never materializes — installed from inside the factory the layer
-// was simply absent, with no residue explaining why. Executing the script is the
-// one event that always happens, so it is the only safe place for a page-wide
-// preference the user set once and expects to hold.
+// materializes the factory. The loader's contract (dsh-client-modules, lines
+// 16-31) is lazy: a bundle that executes only REGISTERS its factory, and the
+// exports appear on the first import/require, so a row that is never imported
+// never materializes and a page-wide side effect living inside the factory can
+// be absent with no residue and no error. Script execution is the first event a
+// served bundle always produces, which is why the layer sits here. This is not
+// offered as the established cause of this plugin's own historical absence —
+// README says why (an unguarded require('react') aborts materialization the same
+// way), and it cannot cover a bundle the host never serves at all.
 const layer = startLayer();
 layer.onDispose = [];
 
@@ -357,10 +360,12 @@ window.__ModuleLoader__.load({
   id: ID,
   factory(require) {
     return {
-      // Declared for the row only. Measured: in this harness the slot service is
-      // reachable as ctx.slots only when the module declares it, and the row
-      // cannot mount without it. The layer is installed before this face is read,
-      // so a dependency that never resolves costs the row and nothing else.
+      // Declared for the row only: on this cordis a bound ctx member exists only
+      // for a declared inject, and the declaration also parks the fiber until the
+      // provider is active. service() still falls back to the un-gated ctx.get,
+      // so a page that exposes the service that way mounts the row too. The layer
+      // is installed before this face is read, so a dependency that never
+      // resolves costs the row and nothing else.
       inject: ['slots'],
       apply(ctx) {
         mark('applying');

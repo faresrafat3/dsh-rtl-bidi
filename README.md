@@ -21,14 +21,17 @@ client module loader materializes a factory lazily — its own contract
 resolution order (a bundle that executes only *registers* its factory; the
 exports appear on the first import/require), `arrive(row)` returns early when
 `factories.has(id)`, and a factory registered through the real
-`window.__ModuleLoader__.load` was observed never to run in the live page. So a
-row that is invalidated, still arriving or never imported never materializes, and
-a page-wide side effect living inside the factory can be absent with no residue
-and no error. **Not proven:** that laziness is what made *this* plugin absent.
-The row materializes today, both versions shared the same loader row, and the
-older version's factory opened with an unguarded `require('react')` — a throw
-there aborts materialization before anything is installed, which fits the same
-symptom. Installing from the script retires the whole class of risk.
+`window.__ModuleLoader__.load` was observed never to run in the live page. So
+materialization is not guaranteed: a row that is still arriving or never imported
+never gets there, and invalidation drops the factory until a later import
+re-materializes it. A page-wide side effect living inside the factory can
+therefore be absent with no residue and no error. **Not proven:** that laziness is
+what made *this* plugin absent. The row materializes today, both versions shared
+the same loader row, and the older version's factory opened with an unguarded
+`require('react')` — a throw there aborts materialization before anything is
+installed, which fits the same symptom. Installing from the script removes that
+class of risk for every bundle the host actually serves (it cannot cover one that
+is never served).
 
 **The row is optional.** It declares `inject: ['slots']`. On this cordis, reading
 `ctx.slots` without that declaration throws, and the declaration also parks the
