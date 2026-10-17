@@ -62,7 +62,52 @@ function fakeReact() {
   };
 }
 
-function makeDom({ storageThrows = false, stored = null, htmlLang = null } = {}) {
+/** A frame is a document of its own, which is the whole point of these tests:
+ *  a same-origin one can be entered, a different origin refuses the read. */
+function frameDoc({ dir = null, lang = null } = {}) {
+  const root = element('html');
+  if (dir !== null) root.setAttribute('dir', dir);
+  if (lang !== null) root.setAttribute('lang', lang);
+  const head = element('head');
+  const doc = {
+    documentElement: root,
+    head,
+    createElement: (tag) => element(tag),
+    getElementById: (id) => head.children.find((child) => child.id === id) || null,
+  };
+  return { doc, root, head };
+}
+
+function frameElement({ doc = null, crossOrigin = false, src = 'about:blank' } = {}) {
+  const el = element('iframe');
+  el.setAttribute('src', src);
+  const posted = [];
+  const frameHandlers = { keydown: [] };
+  const win = {
+    addEventListener: (type, fn) => frameHandlers[type]?.push(fn),
+    removeEventListener: (type, fn) => {
+      const list = frameHandlers[type] || [];
+      const index = list.indexOf(fn);
+      if (index >= 0) list.splice(index, 1);
+    },
+    postMessage: (data) => posted.push(data),
+  };
+  let current = doc;
+  Object.defineProperty(el, 'contentDocument', {
+    get() {
+      if (crossOrigin) throw new Error('cross-origin: refused');
+      return current;
+    },
+  });
+  Object.defineProperty(el, 'contentWindow', { get: () => win });
+  el.posted = posted;
+  el.frameHandlers = frameHandlers;
+  el.win = win;
+  el.navigate = (next) => { current = next; };
+  return el;
+}
+
+function makeDom({ storageThrows = false, stored = null, htmlLang = null, frames = [] } = {}) {
   const html = element('html');
   if (htmlLang !== null) html.setAttribute('lang', htmlLang);
   const head = element('head');
@@ -71,6 +116,7 @@ function makeDom({ storageThrows = false, stored = null, htmlLang = null } = {})
     head,
     createElement: (tag) => element(tag),
     getElementById: (id) => head.children.find((child) => child.id === id) || null,
+    getElementsByTagName: (tag) => (tag === 'iframe' ? frames : []),
   };
   const store = new Map();
   if (stored !== null) store.set('dsh:rtl-bidi', stored);
@@ -96,7 +142,7 @@ function makeDom({ storageThrows = false, stored = null, htmlLang = null } = {})
     disconnect() { this.disconnected = true; }
     fire() { if (!this.disconnected) this.callback([]); }
   }
-  const handlers = { keydown: [] };
+  const handlers = { keydown: [], message: [], load: [] };
   let loaded = null;
   const window = {
     __ModuleLoader__: { load: (mod) => { loaded = mod; } },
@@ -108,7 +154,7 @@ function makeDom({ storageThrows = false, stored = null, htmlLang = null } = {})
     },
     handlers,
   };
-  return { window, document, localStorage, MutationObserver, observers, html, head, store, handlers, get loaded() { return loaded; } };
+  return { window, document, localStorage, MutationObserver, observers, html, head, store, handlers, frames, get loaded() { return loaded; } };
 }
 
 function boot(options = {}) {
@@ -359,4 +405,106 @@ test('the layer has its own dispose, and it puts the page back', () => {
   assert.equal(dom.html.dataset.dshRtlBidi, undefined);
   assert.equal(dom.document.getElementById(STYLE_ID), null);
   assert.equal(dom.window.handlers.keydown.length, 0);
+});
+
+// --- frames: a plugin surface rendered in an iframe is a document of its own --
+
+test('a same-origin frame is entered and painted like the shell', () => {
+  const frame = frameElement({ doc: frameDoc().doc, src: 'http://127.0.0.1:3080/preview' });
+  const dom = boot({ frames: [frame] });
+  const inner = frame.contentDocument;
+  assert.equal(inner.documentElement.getAttribute('dir'), 'rtl', 'the frame root mirrors the shell');
+  assert.equal(inner.documentElement.dataset.dshRtlBidi, 'on');
+  assert.ok(inner.getElementById(STYLE_ID), 'the same sheet is installed inside the frame');
+  assert.equal(dom.window.__dshRtlBidiLayer.frames()[0].entered, true);
+
+  altR(dom.window); // the shell's shortcut turns the frame off with it
+  assert.equal(inner.documentElement.getAttribute('dir'), null, 'the frame keeps its own original dir');
+  // The sheet stays, exactly as it does in the shell: every rule in it is scoped
+  // to html[dir="rtl"], so with the attribute gone it is inert, not wrong.
+  assert.ok(inner.getElementById(STYLE_ID), 'the sheet stays installed and inert');
+  assert.equal(inner.documentElement.dataset.dshRtlBidi, 'off');
+});
+
+test('the shortcut works from inside an entered frame', () => {
+  const frame = frameElement({ doc: frameDoc({ dir: 'ltr', lang: 'en' }).doc });
+  const dom = boot({ frames: [frame] });
+  const inner = frame.contentDocument;
+  assert.equal(inner.documentElement.getAttribute('dir'), 'rtl');
+  const event = { altKey: true, ctrlKey: false, metaKey: false, code: 'KeyR', key: 'r', prevented: false, preventDefault() { event.prevented = true; } };
+  for (const handler of frame.frameHandlers.keydown) handler(event);
+  assert.equal(inner.documentElement.getAttribute('dir'), 'ltr', 'the frame is back to its own original');
+  assert.equal(inner.documentElement.getAttribute('lang'), 'en');
+  assert.equal(dom.html.getAttribute('dir'), null, 'and the shell followed: one state, both faces');
+});
+
+test('a cross-origin frame cannot be entered, so it is told instead', () => {
+  const frame = frameElement({ crossOrigin: true, src: 'http://127.0.0.1:8890/' });
+  const dom = boot({ frames: [frame] });
+  const layer = dom.window.__dshRtlBidiLayer;
+  // Cross-realm: the layer builds these inside the vm context, so compare values.
+  const last = JSON.parse(JSON.stringify(frame.posted[frame.posted.length - 1]));
+  assert.deepEqual(last, { type: 'dsh-rtl-bidi', on: true, lang: 'ar' }, 'the state is posted, not injected');
+  assert.deepEqual(JSON.parse(JSON.stringify(layer.frames()[0])), {
+    src: 'http://127.0.0.1:8890/', entered: false, dir: null, told: { on: true, lang: 'ar' }, ack: null,
+  });
+  frame.posted.length = 0;
+  altR(dom.window);
+  const off = JSON.parse(JSON.stringify(frame.posted.filter((m) => m.type === 'dsh-rtl-bidi')[0]));
+  assert.deepEqual(off, { type: 'dsh-rtl-bidi', on: false, lang: 'ar' }, 'a toggle reaches the frame it cannot enter');
+});
+
+test('a frame may ask for the state, and the layer answers it', () => {
+  const frame = frameElement({ crossOrigin: true, src: 'http://127.0.0.1:8890/' });
+  const dom = boot({ frames: [frame] });
+  frame.posted.length = 0;
+  for (const handler of dom.window.handlers.message) handler({ data: { type: 'dsh-rtl-bidi:hello' }, source: frame.win });
+  const answer = JSON.parse(JSON.stringify(frame.posted[frame.posted.length - 1]));
+  assert.deepEqual(answer, { type: 'dsh-rtl-bidi', on: true, lang: 'ar' }, 'the answer carries the current state');
+});
+
+test('an ack is recorded, and a foreign message cannot move the layer', () => {
+  const frame = frameElement({ crossOrigin: true, src: 'http://127.0.0.1:8890/' });
+  const dom = boot({ frames: [frame] });
+  const layer = dom.window.__dshRtlBidiLayer;
+  for (const handler of dom.window.handlers.message) {
+    handler({ data: { type: 'dsh-rtl-bidi:ack', on: false, dir: 'ltr' }, source: frame.win });
+    handler({ data: { type: 'not-ours', on: false }, source: frame.win });
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(layer.frames()[0].ack)), { on: false, dir: 'ltr' }, 'the frame confirmed the state it applied');
+  assert.equal(layer.on, true, 'a message never sets the layer state');
+  assert.equal(dom.html.getAttribute('dir'), 'rtl');
+});
+
+test('a frame that navigates or disappears is released, never left painted', () => {
+  const first = frameDoc();
+  const frame = frameElement({ doc: first.doc });
+  const dom = boot({ frames: [frame] });
+  assert.equal(first.root.getAttribute('dir'), 'rtl');
+
+  const second = frameDoc({ dir: 'ltr' });
+  frame.navigate(second.doc);
+  altR(dom.window); // off
+  altR(dom.window); // on again: the scan sees the new document
+  assert.equal(first.root.getAttribute('dir'), null, 'the old document is put back');
+  assert.equal(first.head.children.length, 0, 'and its sheet is removed');
+  assert.equal(second.root.getAttribute('dir'), 'rtl', 'the new document is painted instead');
+
+  dom.frames.length = 0; // the app removes the panel
+  altR(dom.window);
+  assert.equal(second.root.getAttribute('dir'), 'ltr', 'a removed frame goes back to its own original too');
+  assert.equal(second.head.children.length, 0);
+  assert.equal(frame.frameHandlers.keydown.length, 0, 'and its shortcut is unbound');
+});
+
+test('disposing the layer releases every frame it entered', () => {
+  const inner = frameDoc({ dir: 'ltr', lang: 'en' });
+  const frame = frameElement({ doc: inner.doc });
+  const dom = boot({ frames: [frame] });
+  assert.equal(inner.root.getAttribute('dir'), 'rtl');
+  dom.window.__dshRtlBidiLayer.dispose();
+  assert.equal(inner.root.getAttribute('dir'), 'ltr');
+  assert.equal(inner.root.getAttribute('lang'), 'en');
+  assert.equal(inner.head.children.length, 0);
+  assert.equal(frame.frameHandlers.keydown.length, 0, 'the frame shortcut is unbound');
 });

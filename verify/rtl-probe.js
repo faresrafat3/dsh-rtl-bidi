@@ -101,6 +101,12 @@
     window.__rtlProbeHeal = { dir: html.getAttribute('dir'), lang: html.getAttribute('lang') };
   }, 250);
   report.selfHealing = 'see window.__rtlProbeHeal after ~300ms (expected rtl/ar)';
+  // Every frame the page holds: entered means the layer is inside it; told is the
+  // state it was sent; ack is the state the frame itself confirmed. A cross-origin
+  // plugin panel (the Documents panel serves from its own origin) can only ever
+  // appear here as told+ack — that is the whole point of the bridge.
+  const layer = window.__dshRtlBidiLayer;
+  report.frames = layer && typeof layer.frames === 'function' ? layer.frames() : null;
 
   return report;
 })()

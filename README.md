@@ -113,9 +113,34 @@ fixed overlay therefore cannot be placed safely across views, so the layer adds
 zero pixels of its own and exposes the control through the settings row and Alt+R
 instead.
 
+## Surfaces that are documents of their own
+
+The layer is document-scoped, and a plugin surface rendered in an iframe is a
+separate document: its own url, its own `dir`/`lang`, its own CSS, and on a
+different origin a `contentDocument` the browser refuses to hand over. Measured
+on the Documents panel (`http://127.0.0.1:8890/`): `contentDocument === null`, and
+with the layer off the shell went `ltr` while the frame kept its own direction —
+the control could not reach it at all. The layer now does both things an iframe
+allows:
+
+| Frame | What the layer does |
+|---|---|
+| same origin, `contentDocument` reachable | enters it: root `dir`/`lang`, the same sheet, and Alt+R bound inside it |
+| any frame | posts `{type:'dsh-rtl-bidi', on, lang}` on every change and on every load |
+
+A page that wants to follow answers `{type:'dsh-rtl-bidi:hello'}` (asking for the
+current state) and confirms with `{type:'dsh-rtl-bidi:ack', on, dir}`. The layer
+answers the ask and records the ack; it never takes its own state from a message,
+and it ignores anything not carrying its own type. Measured live on the Documents
+frame after that handshake: told `{on:false, lang:'ar'}` -> acked
+`{on:false, dir:'ltr'}` while the shell went `ltr`. `docserve` carries the ~15-line
+listener that makes it cooperative; a page that never answers simply keeps its own
+default, which is why `window.__dshRtlBidiLayer.frames()` reports every frame as
+`{src, entered, dir, told, ack}` — "it follows" is then a reading, not a claim.
+
 ## Verification
 
-    npm test          # 15 tests, node --test tests/, no Harness required
+    npm test          # 22 tests, node --test tests/, no Harness required
 
 That suite is a module-behaviour suite over the real `client.js` in a `node:vm`
 sandbox, not evidence about the loader: some of its assertions exercise only
@@ -134,6 +159,6 @@ every visual statement is a computed style or an element rectangle.
 | `package.json` | bundle manifest; `dsh.client.immediately = true`, empty `inject` |
 | `cordis.patch.yml` | inserts loader row `rtl-bidi` |
 | `index.js` | host half, `apply()` is intentionally empty |
-| `client.js` | the whole feature: layer, row, shortcut, ~400 lines with comments |
-| `tests/client.test.mjs` | 15 tests: loader contract, fault isolation, store, watcher, row |
+| `client.js` | the whole feature: layer, row, shortcut, frame bridge, ~600 lines with comments |
+| `tests/client.test.mjs` | 22 tests: loader contract, fault isolation, store, watcher, row, frames |
 | `verify/rtl-probe.js` | the live-page probe, read-only |

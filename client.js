@@ -1,7 +1,7 @@
 /**
  * RTL + bidi layer for the Harness Web UI.
  *
- * Three properties, in this order of priority:
+ * Four properties, in this order of priority:
  *
  *  1. The layer always applies. It needs no service, no React and no slot: the
  *     style sheet, the root direction and the Alt+R shortcut are installed when
@@ -14,6 +14,12 @@
  *  3. General and self-healing. It tracks whichever right-to-left language the
  *     page is actually in, re-asserts dir/lang/style if the app rewrites them,
  *     and puts the original markup back when disposed.
+ *  4. It reaches the surfaces that are documents of their own. A plugin panel in
+ *     an iframe is outside a document-scoped layer by construction, so a
+ *     same-origin frame is entered (root, sheet, shortcut) and every frame is
+ *     told the state; a cooperative page acknowledges. Measured on the Documents
+ *     panel, which the layer may not enter: told `{on:false}` -> ack
+ *     `{on:false, dir:'ltr'}`.
  *
  * Measured on the live page (2026-10-17, 1198x1417): <html lang="en"> with no
  * dir attribute, every element computing ltr and none fixing direction on its
@@ -32,6 +38,13 @@ const DEFAULT_LANG = 'ar';
 // Languages the layer will declare when the page is already in one of them.
 const RTL_LANGS = ['ar', 'he', 'fa', 'ur', 'yi', 'dv', 'ps', 'sd', 'ug', 'ckb'];
 const HANDLE = '__dshRtlBidiLayer';
+// A frame is a document of its own: the layer is not *in* it unless this
+// document may enter it (same origin: contentDocument is reachable), and a frame
+// it may not enter is only told. A page that wants to follow that message
+// answers with the hello/ack forms below.
+const FRAME_MSG = 'dsh-rtl-bidi';
+const FRAME_HELLO = FRAME_MSG + ':hello';
+const FRAME_ACK = FRAME_MSG + ':ack';
 
 const CSS = `html[dir="rtl"] { direction: rtl; }
 
@@ -97,6 +110,146 @@ function startLayer() {
     else el.setAttribute(name, value);
   };
 
+  // --- surfaces that are documents of their own -------------------------------
+  // A plugin surface rendered in an iframe is not covered by a layer that lives
+  // in this document: it has its own url, its own dir/lang, its own CSS and, on a
+  // different origin, a contentDocument the browser refuses to hand over
+  // (measured null on the Documents panel, which is served from 127.0.0.1:8890).
+  // Same-origin frames are entered and painted; every frame is also told, and a
+  // page that opts in answers the hello/ack forms. Neither needs a service, so
+  // the layer keeps its first property: it applies whatever else is missing.
+  const frames = new Map(); // iframe -> { doc, win, sheet, original }
+  const acks = new Map(); // iframe -> the state that frame last confirmed
+  const told = new Map(); // iframe -> the state last posted to it
+
+  function enter(frame) {
+    let doc = null;
+    try {
+      doc = frame.contentDocument;
+    } catch (err) {
+      doc = null; // a different origin: the read itself is refused
+    }
+    if (!doc || !doc.documentElement) return null;
+    const root = doc.documentElement;
+    const sheet = doc.createElement('style');
+    sheet.id = STYLE_ID;
+    sheet.setAttribute('data-plugin', ID);
+    sheet.textContent = CSS;
+    (doc.head || root).appendChild(sheet);
+    const entry = {
+      doc,
+      win: frame.contentWindow || null,
+      sheet,
+      original: { dir: root.getAttribute('dir'), lang: root.getAttribute('lang') },
+    };
+    // Alt+R works from inside a frame this document may enter: the frame's own
+    // keydown toggles the one state, exactly like the shell's does.
+    try {
+      if (entry.win) entry.win.addEventListener('keydown', onKey, true);
+    } catch (err) {
+      /* a frame with no reachable window: nothing to bind */
+    }
+    return entry;
+  }
+
+  function leave(frame) {
+    const entry = frames.get(frame);
+    frames.delete(frame);
+    acks.delete(frame);
+    told.delete(frame);
+    if (!entry) return;
+    try {
+      if (entry.win) entry.win.removeEventListener('keydown', onKey, true);
+    } catch (err) {
+      /* the window went away with its document */
+    }
+    try {
+      entry.sheet.remove();
+      put(entry.doc.documentElement, 'dir', entry.original.dir);
+      put(entry.doc.documentElement, 'lang', entry.original.lang);
+      delete entry.doc.documentElement.dataset.dshRtlBidi;
+    } catch (err) {
+      /* the frame navigated: its old document is already gone */
+    }
+  }
+
+  function paintInto(entry) {
+    if (!entry) return;
+    try {
+      const root = entry.doc.documentElement;
+      if (on) {
+        if (root.getAttribute('dir') !== 'rtl') root.setAttribute('dir', 'rtl');
+        if (root.getAttribute('lang') !== lang) root.setAttribute('lang', lang);
+      } else {
+        put(root, 'dir', entry.original.dir);
+        put(root, 'lang', entry.original.lang);
+      }
+      root.dataset.dshRtlBidi = on ? 'on' : 'off';
+      if (!entry.doc.getElementById(STYLE_ID)) (entry.doc.head || root).appendChild(entry.sheet);
+    } catch (err) {
+      /* the document went away mid-paint */
+    }
+  }
+
+  function tell(frame) {
+    told.set(frame, { on, lang });
+    try {
+      const win = frame.contentWindow;
+      if (win) win.postMessage({ type: FRAME_MSG, on, lang }, '*');
+    } catch (err) {
+      /* no window object: there is nothing to tell */
+    }
+  }
+
+  function frameList() {
+    try {
+      return document.getElementsByTagName ? document.getElementsByTagName('iframe') : [];
+    } catch (err) {
+      return [];
+    }
+  }
+
+  function frameOf(source) {
+    const list = frameList();
+    for (let i = 0; i < list.length; i++) {
+      try {
+        if (list[i].contentWindow === source) return list[i];
+      } catch (err) {
+        /* keep looking */
+      }
+    }
+    return null;
+  }
+
+  /** Enter every frame this document may enter, tell every frame, and forget the
+   *  ones that are gone. One live-collection walk, so it is safe on a load. */
+  function scanFrames() {
+    const list = frameList();
+    const seen = new Set();
+    for (let i = 0; i < list.length; i++) {
+      const frame = list[i];
+      seen.add(frame);
+      let doc = null;
+      try {
+        doc = frame.contentDocument;
+      } catch (err) {
+        doc = null;
+      }
+      const entry = frames.get(frame);
+      if (entry && entry.doc !== doc) leave(frame); // the frame navigated
+      if (!doc || !doc.documentElement) {
+        if (!frames.has(frame)) tell(frame);
+        continue;
+      }
+      if (!frames.has(frame)) {
+        const fresh = enter(frame);
+        if (fresh) frames.set(frame, fresh);
+      }
+      paintInto(frames.get(frame));
+    }
+    for (const frame of Array.from(frames.keys())) if (!seen.has(frame)) leave(frame);
+  }
+
   function paint() {
     if (on) {
       if (html.getAttribute('dir') !== 'rtl') html.setAttribute('dir', 'rtl');
@@ -107,6 +260,28 @@ function startLayer() {
     }
     html.dataset.dshRtlBidi = on ? 'on' : 'off'; // machine-checkable marker
     if (!document.getElementById(STYLE_ID)) host().appendChild(style);
+    scanFrames();
+  }
+
+  /** A frame may load after the layer, so it may ask for the state; and it may
+   *  confirm what it applied. The layer answers and records — it never takes its
+   *  own state from a message, and it ignores anything that is not ours. */
+  function onMessage(event) {
+    const data = event && event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === FRAME_HELLO) {
+      try {
+        if (event.source) event.source.postMessage({ type: FRAME_MSG, on, lang }, '*');
+      } catch (err) {
+        /* the asker went away */
+      }
+      return;
+    }
+    if (data.type !== FRAME_ACK) return;
+    const frame = frameOf(event.source);
+    if (frame) {
+      acks.set(frame, { on: data.on !== false, dir: typeof data.dir === 'string' ? data.dir : null });
+    }
   }
 
   function setOn(next) {
@@ -158,6 +333,9 @@ function startLayer() {
   const head = document.head;
   if (head) watcher.observe(head, { childList: true });
   window.addEventListener('keydown', onKey, true);
+  window.addEventListener('message', onMessage);
+  // Capture, so every frame load is seen, including one the app adds later.
+  window.addEventListener('load', scanFrames, true);
   paint();
 
   const layer = {
@@ -170,9 +348,32 @@ function startLayer() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    /** What the layer knows about each frame, for a probe: entered (the layer is
+     *  in it), told (the state it was sent), ack (the state it confirmed). */
+    frames() {
+      const list = frameList();
+      const out = [];
+      for (let i = 0; i < list.length; i++) {
+        const frame = list[i];
+        const entry = frames.get(frame);
+        out.push({
+          src: frame.src || frame.getAttribute('src') || null,
+          entered: !!entry,
+          dir: entry ? entry.doc.documentElement.getAttribute('dir') : null,
+          told: told.get(frame) || null,
+          ack: acks.get(frame) || null,
+        });
+      }
+      return out;
+    },
     dispose() {
       watcher.disconnect();
       window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('message', onMessage);
+      window.removeEventListener('load', scanFrames, true);
+      for (const frame of Array.from(frames.keys())) leave(frame);
+      acks.clear();
+      told.clear();
       listeners.clear();
       style.remove();
       put(html, 'dir', original.dir);
