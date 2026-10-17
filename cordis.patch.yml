@@ -1,0 +1,3 @@
+- insert:
+    - id: rtl-bidi
+      name: '@fares/dsh-rtl-bidi'
