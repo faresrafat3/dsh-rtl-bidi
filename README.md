@@ -184,7 +184,7 @@ default, which is why `window.__dshRtlBidiLayer.frames()` reports every frame as
 
 ## Verification
 
-    npm test          # 22 tests, node --test tests/, no Harness required
+    npm test          # 22 tests, node --test tests/*.test.mjs, no Harness required
 
 That suite is a module-behaviour suite over the real `client.js` in a `node:vm`
 sandbox, not evidence about the loader: some of its assertions exercise only
