@@ -8,6 +8,50 @@ The page ships `<html lang="en">` with no `dir` attribute: every element compute
 Arabic family, so Arabic text falls back per glyph and mixed Arabic/Latin
 paragraphs resolve with a left-to-right base direction.
 
+[![test](https://github.com/faresrafat3/dsh-rtl-bidi/actions/workflows/test.yml/badge.svg)](https://github.com/faresrafat3/dsh-rtl-bidi/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## Install it alone
+
+Nothing else is required: no other plugin, no build step, no runtime dependency.
+The package carries its own patch (`cordis.patch.yml`) and one client module.
+
+```bash
+git clone https://github.com/faresrafat3/dsh-rtl-bidi.git
+cd dsh-rtl-bidi
+dsh plugin --profile web add link:$PWD
+```
+
+Then list it as a bundle in `~/.dsh/profiles/web/package.json`:
+
+```json
+{
+  "dependencies": { "@fares/dsh-rtl-bidi": "link:/absolute/path/to/dsh-rtl-bidi" },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@fares/dsh-rtl-bidi"] } }
+}
+```
+
+Restart the backend (`dsh web`) and the layer is on. Remove it with
+`dsh plugin --profile web remove @fares/dsh-rtl-bidi` plus dropping the name from
+`bundles`; or keep it installed and disable only the row with the plugin
+manager's `set_bundle { enabled: false }`.
+
+Verify it on the live page with `verify/rtl-probe.js` (see `verify/README.md`);
+`npm test` covers the module behaviour with no Harness running.
+
+## Compatibility
+
+| Harness | Status |
+|---|---|
+| dsh 0.2.1 (`web` profile, Desktop GUI window) | measured — all numbers above |
+| dsh 0.2.x older profiles | untested; the surfaces used (`settings.general.item`, `ctx.effect`, `__ModuleLoader__`) are the 0.2 ones |
+| Node | 20+ (test suite and CI matrix) |
+
+The plugin is a bundle, not a patch of the host: it inserts one loader row and
+owns nothing outside it. If the host changes a surface it uses, the row states
+it (`data-dsh-rtl-bidi-row="skipped:…"`) instead of failing silently.
+
+
 ## Two guarantees
 
 **The layer is unconditional.** It is installed when the bundle script executes —
@@ -162,3 +206,18 @@ every visual statement is a computed style or an element rectangle.
 | `client.js` | the whole feature: layer, row, shortcut, frame bridge, ~600 lines with comments |
 | `tests/client.test.mjs` | 22 tests: loader contract, fault isolation, store, watcher, row, frames |
 | `verify/rtl-probe.js` | the live-page probe, read-only |
+
+## Repo layout
+
+| Path | Purpose |
+|---|---|
+| `client.js` | the product: layer, row, shortcut, frame bridge |
+| `index.js` | host half, `apply()` is intentionally empty |
+| `cordis.patch.yml` | the one loader row the bundle inserts |
+| `package.json` | manifest: `dsh.bundle.patch`, `dsh.client`, `files`, exports |
+| `tests/` | `node --test` suite, no dependencies |
+| `verify/` | live-page probe and the expected values it is compared against |
+| `.github/workflows/test.yml` | CI: Node 20 / 22 / 24, `npm test` |
+| `CHANGELOG.md` | Keep a Changelog, SemVer |
+| `CONTRIBUTING.md` | the loop, and the five properties a change must keep |
+| `LICENSE` | MIT |

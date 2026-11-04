@@ -1,12 +1,51 @@
 {
   "name": "@fares/dsh-rtl-bidi",
   "version": "2.1.0",
+  "description": "Right-to-left and bidi layer for the DSH Harness Web UI: one client bundle, no overlay, a settings row, Alt+R, and a probe that measures the flip.",
   "private": true,
   "type": "module",
-  "exports": { ".": "./index.js", "./client": "./client.js" },
-  "scripts": { "test": "node --test tests/" },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/",
+    "test:watch": "node --test --watch tests/"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "rtl",
+    "bidi",
+    "arabic",
+    "i18n"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faresrafat3/dsh-rtl-bidi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/faresrafat3/dsh-rtl-bidi/issues"
+  },
+  "homepage": "https://github.com/faresrafat3/dsh-rtl-bidi#readme",
+  "author": "Fares Rafat",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
