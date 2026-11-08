@@ -162,10 +162,30 @@ function boot(options = {}) {
   const sandbox = {
     window: dom.window,
     document: dom.document,
-    localStorage: dom.localStorage,
     MutationObserver: dom.MutationObserver,
     console,
   };
+  if (options.storageAccessThrows) {
+    // A sandboxed iframe (sandbox without allow-same-origin) or a null-origin
+    // document refuses the storage itself: reading localStorage throws a
+    // SecurityError before any method on it can be reached. A throwing global
+    // getter is not reachable by the bare identifier inside a node:vm context
+    // (measured: `typeof localStorage` is undefined even with the accessor
+    // present, though `"localStorage" in globalThis` is true), so the refusal
+    // is modelled as a proxy that throws on every access — the same observable
+    // contract for the code under test.
+    const securityError = () => {
+      const err = new Error("SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document.");
+      err.name = 'SecurityError';
+      return err;
+    };
+    sandbox.localStorage = new Proxy({}, {
+      get() { throw securityError(); },
+      set() { throw securityError(); },
+    });
+  } else {
+    sandbox.localStorage = dom.localStorage;
+  }
   vm.createContext(sandbox);
   vm.runInContext(SRC, sandbox);
   assert.ok(dom.loaded, 'the module registered itself with __ModuleLoader__');
@@ -293,6 +313,24 @@ test('blocked storage does not stop the layer', () => {
   dom.loaded.factory(reactRequire());
   assert.equal(dom.html.getAttribute('dir'), 'rtl');
   assert.equal(dom.html.dataset.dshRtlBidi, 'on');
+});
+
+test('a refused localStorage property (sandboxed frame, null origin) costs persistence and nothing else', () => {
+  // A sandboxed iframe (sandbox without allow-same-origin) or a null-origin
+  // document refuses the storage property itself, before getItem can be
+  // reached. The layer must still install from its default, and the toggle
+  // must still work without persisting: the refusal is on the read and on the
+  // write alike.
+  const dom = boot({ storageAccessThrows: true });
+  dom.loaded.factory(reactRequire());
+  assert.equal(dom.html.getAttribute('dir'), 'rtl');
+  assert.equal(dom.html.getAttribute('lang'), 'ar');
+  assert.equal(dom.html.dataset.dshRtlBidi, 'on');
+  assert.ok(dom.document.getElementById(STYLE_ID), 'the sheet is installed');
+  assert.doesNotThrow(() => altR(dom.window), 'the toggle survives a storage that refuses writes too');
+  assert.equal(dom.html.dataset.dshRtlBidi, 'off');
+  assert.equal(dom.html.getAttribute('dir'), null);
+  assert.equal(dom.html.getAttribute('lang'), null);
 });
 
 test('Alt+R toggles, persists, and restores the original markup', () => {
@@ -474,6 +512,35 @@ test('an ack is recorded, and a foreign message cannot move the layer', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(layer.frames()[0].ack)), { on: false, dir: 'ltr' }, 'the frame confirmed the state it applied');
   assert.equal(layer.on, true, 'a message never sets the layer state');
   assert.equal(dom.html.getAttribute('dir'), 'rtl');
+});
+
+test('a message whose data is null or not an object is ignored, and the listener stays live', () => {
+  const frame = frameElement({ crossOrigin: true, src: 'http://127.0.0.1:8890/' });
+  const dom = boot({ frames: [frame] });
+  const layer = dom.window.__dshRtlBidiLayer;
+  frame.posted.length = 0; // boot told the frame once; the rest is ours to read
+  // Any window may post anything. None of these may reach data.type, and none
+  // may move the layer or cost the listener its next event.
+  const refused = [
+    { data: null, source: frame.win },
+    { data: 'dsh-rtl-bidi:hello', source: frame.win },
+    { data: 42, source: frame.win },
+    { data: undefined, source: frame.win },
+    { source: frame.win },
+  ];
+  for (const event of refused) {
+    assert.doesNotThrow(() => {
+      for (const handler of dom.window.handlers.message) handler(event);
+    });
+  }
+  assert.equal(layer.on, true, 'no refused message moved the layer');
+  assert.equal(frame.posted.length, 0, 'and nothing was answered');
+  // The listener is still live: a real hello gets the current state back.
+  for (const handler of dom.window.handlers.message) {
+    handler({ data: { type: 'dsh-rtl-bidi:hello' }, source: frame.win });
+  }
+  const answer = JSON.parse(JSON.stringify(frame.posted[frame.posted.length - 1]));
+  assert.deepEqual(answer, { type: 'dsh-rtl-bidi', on: true, lang: 'ar' });
 });
 
 test('a frame that navigates or disappears is released, never left painted', () => {

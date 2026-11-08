@@ -23,7 +23,7 @@ google-chrome --user-data-dir="$HOME/.config/chromium" --remote-debugging-port=0
 Chrome refuses `--remote-debugging-port` on its default profile directory, so a
 non-default `--user-data-dir` is required.
 
-`npm test` is the other half: 22 tests under `node --test tests/` mount the real
+`npm test` is the other half: 24 tests under `node --test tests/` mount the real
 `client.js` in a `node:vm` sandbox with a stub DOM and a fault-injecting
 `require`, so the guarantees below can be re-checked on a machine with no
 Harness running at all.

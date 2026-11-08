@@ -6,7 +6,7 @@ are short because the surface is.
 ## The loop
 
 ```bash
-npm test          # 22 tests, node --test, no Harness required
+npm test          # 24 tests, node --test, no Harness required
 ```
 
 Load it into a running Harness (`~/.dsh/profiles/web`) and open the app:
